@@ -1,0 +1,108 @@
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(osmdata)
+library(gganimate)
+library(systemfonts)
+
+
+# read in the data
+scooter_roxy <- st_read("geodata/scooter_roxy.gpkg")
+st_crs(scooter_roxy) <- 4326
+scooter_roxy$scooter <- "Roxy"
+
+scooter_yoio <- st_read("geodata/scooter_yoio.gpkg")
+st_crs(scooter_yoio) <- 4326
+scooter_yoio$scooter <- "Yoio"
+
+scooter_freib <- st_read("geodata/scooter_freib.gpkg")
+st_crs(scooter_freib) <- 4326
+scooter_freib$scooter <- "Freib-e"
+
+scooter <- do.call(rbind, list(scooter_freib,scooter_yoio,scooter_roxy))
+
+# streets data
+big_streets <- getbb("Freiburg im Breisgau")%>%
+  opq()%>%
+  add_osm_feature(key = "highway", 
+                  value = c("motorway", "primary", "motorway_link", "primary_link")) %>%
+  osmdata_sf()
+big_streets <- big_streets$osm_lines
+
+med_streets <- getbb("Freiburg im Breisgau")%>%
+  opq()%>%
+  add_osm_feature(key = "highway", 
+                  value = c("secondary", "tertiary", "secondary_link", "tertiary_link")) %>%
+  osmdata_sf()
+med_streets <- med_streets$osm_lines
+
+
+small_streets <- getbb("Freiburg im Breisgau")%>%
+  opq()%>%
+  add_osm_feature(key = "highway", 
+                  value = c("residential", "living_street",
+                            "unclassified",
+                            "service", "footway"
+                  )) %>%
+  osmdata_sf()
+small_streets <- small_streets$osm_lines
+
+streets <- bind_rows(big_streets, med_streets, small_streets) %>% 
+  st_transform(32632)
+
+temp <- getbb("Freiburg im Breisgau")%>%
+  opq()%>%
+  osmdata::add_osm_feature(key = "boundary", value = "administrative") %>% 
+  osmdata::add_osm_feature(key = "admin_level", value = 6) %>% 
+  osmdata::osmdata_sf() 
+temp
+temp <- temp$osm_multipolygons
+city <- temp[1,]
+
+river <- getbb("Freiburg im Breisgau")%>%
+  opq()%>%
+  add_osm_feature(key = "waterway", value = "river") %>%
+  osmdata_sf()
+river <- river$osm_lines
+river <- st_intersection(river, city)
+big_streets <- st_intersection(big_streets, city)
+med_streets <- st_intersection(med_streets, city)
+small_streets <- st_intersection(small_streets, city)
+scooter <- st_intersection(scooter, city)
+
+cols <- c("Freib-e" = "#CD3732", "Roxy" = "#FFD200", "Yoio" = "#1ECF81")
+
+anim <- ggplot(scooter) +
+  geom_sf(data = city, inherit.aes = FALSE, color = "black", fill = "transparent", size = .4, alpha = 0) +
+  geom_sf(data = big_streets, inherit.aes = FALSE, color = "grey75", size = .4, alpha = 0.4) + 
+  geom_sf(data = med_streets, inherit.aes = FALSE, color = "grey45", size = .3, alpha = 0.4) + 
+  geom_sf(data = small_streets, inherit.aes = FALSE, color = "grey45", size = .2, alpha = 0.4) +
+  geom_sf(data = river, inherit.aes = FALSE, color = "steelblue", size = .8, alpha = 0.4) +
+  geom_sf(inherit.aes = FALSE, aes(color = scooter), size = .8) +
+  facet_wrap(vars(scooter)) +
+  scale_color_manual(values = cols) +
+  guides(color = "none") +
+  transition_time(date) +
+  shadow_wake(1.2, size = 0.7, alpha = 0.4, colour = 'grey92') +
+  labs(caption = 'Date: {frame_time}') +
+  theme_void() + 
+  theme(strip.background =element_rect(fill='#dce0e5', colour = NA),
+        strip.text = element_text(family="Victor Mono",
+                                  size = 12, 
+                                  face = "bold", 
+                                  colour = '#181c20',
+                                  margin = margin(.1,0,.1,0, "cm")),
+        plot.caption = element_text(family="Victor Mono",
+                                  size = 8, 
+                                  face = "bold", 
+                                  colour = '#181c20'))
+
+anim2 <- animate(anim, 
+                 detail = 5, 
+                 fps = 15, 
+                 renderer = gifski_renderer(),
+                 device = "ragg_png",
+                 width = 1500, 
+                 height = 600)
+
+gganimate::anim_save(anim2, filename = "gif.gif")
